@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lightware TV</title>
+<!--
+  LIGHTWARE TV — self-running in-store display loop.
+  Feeds on the live catalog (dashboard_items, anon read-only) + the staged
+  transparent cutouts on Supabase storage. No build, no server logic.
+  Hosted on Netlify (lightware-tv) — Samir's personal account, the site that
+  previously served the Jun-27 GlowTech showroom loop (preserved in git at
+  "Lightware TV/index.html"). Product images + catalog come from Supabase.
+  Setup on the screen device: open the URL in a browser, go fullscreen (F11 /
+  TV browser fullscreen), disable device sleep. It handles the rest:
+  hourly data refresh, nightly reload (04:00), image preloading, offline cache.
+-->
+<style>
+  :root{
+    --ink:#0D0B09; --cream:#F2ECDF; --amber:#E8870B; --muted:#9A9082;
+  }
+  @font-face{font-family:'Outfit';font-weight:100 900;
+    src:url('outfit-latin-wght-normal.woff2') format('woff2')}
+  @font-face{font-family:'Plex Arabic';font-weight:600;
+    src:url('ibm-plex-sans-arabic-arabic-600-normal.woff2') format('woff2')}
+  @font-face{font-family:'Plex Arabic';font-weight:400;
+    src:url('ibm-plex-sans-arabic-arabic-400-normal.woff2') format('woff2')}
+
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden;background:var(--ink);cursor:none}
+  body{font-family:'Outfit',sans-serif;color:var(--cream);-webkit-font-smoothing:antialiased}
+
+  .scene{position:absolute;inset:0;opacity:0;transition:opacity 1.4s ease;display:flex;
+    flex-direction:column;align-items:center;justify-content:center;text-align:center;
+    padding:4vmin;}
+  .scene.on{opacity:1}
+
+  /* ---- ambient ground shared by all scenes ---- */
+  .scene::before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;
+    background:radial-gradient(90% 70% at 50% 34%, rgba(232,135,11,.085), transparent 62%)}
+
+  /* ---- product scene ---- */
+  .p-stage{position:relative;z-index:1;flex:1;width:100%;min-height:0;
+    display:flex;align-items:center;justify-content:center}
+  .p-glow{position:absolute;left:50%;bottom:4%;width:64%;height:24%;transform:translateX(-50%);
+    border-radius:50%;background:radial-gradient(50% 50% at 50% 50%, rgba(232,135,11,.22), transparent 70%);
+    animation:breathe 7s ease-in-out infinite}
+  @keyframes breathe{0%,100%{opacity:.75;transform:translateX(-50%) scale(1)}
+    50%{opacity:1;transform:translateX(-50%) scale(1.07)}}
+  .p-img{position:relative;z-index:2;max-width:80%;max-height:92%;object-fit:contain}
+  .on .p-img{animation:drift 13s linear forwards}
+  @keyframes drift{from{transform:scale(1.02)}to{transform:scale(1.1)}}
+  .scene.alt .on .p-img{}
+  .p-txt{position:relative;z-index:2;padding-bottom:5vmin}
+  .p-eyebrow{font-weight:330;font-size:2.1vmin;letter-spacing:.3em;text-transform:uppercase;
+    color:var(--amber);margin-bottom:1.8vmin}
+  .p-name{font-family:'Plex Arabic','Outfit',sans-serif;font-weight:600;font-size:5.4vmin;
+    line-height:1.3;direction:rtl;text-wrap:balance;max-width:82vw;margin:0 auto}
+  .p-sub{font-weight:330;font-size:2vmin;letter-spacing:.22em;text-transform:uppercase;
+    color:var(--muted);margin-top:1.6vmin}
+  .on .p-eyebrow,.on .p-name,.on .p-sub{animation:rise 1.1s .2s both cubic-bezier(.2,.6,.2,1)}
+  .on .p-name{animation-delay:.35s}.on .p-sub{animation-delay:.55s}
+  @keyframes rise{from{opacity:0;transform:translateY(14px);filter:blur(3px)}
+    to{opacity:1;transform:none;filter:none}}
+
+  /* ---- brand statement scene ---- */
+  .mark{position:relative;z-index:1;font-weight:255;letter-spacing:.32em;text-indent:.32em;
+    font-size:9.5vmin;white-space:nowrap}
+  .mark b{color:var(--amber);font-weight:600;animation:pulse 4.5s ease-in-out infinite}
+  @keyframes pulse{0%,100%{text-shadow:0 0 14px rgba(232,135,11,.35)}
+    50%{text-shadow:0 0 34px rgba(232,135,11,.85)}}
+  .tag-ar{position:relative;z-index:1;font-family:'Plex Arabic','Outfit',sans-serif;font-weight:600;
+    font-size:4.6vmin;direction:rtl;margin-top:5vmin;line-height:1.5}
+  .tag-en{position:relative;z-index:1;font-weight:330;font-size:2.2vmin;letter-spacing:.26em;
+    text-transform:uppercase;color:var(--muted);margin-top:2.2vmin}
+  .rule{position:relative;z-index:1;width:11vmin;height:3px;border-radius:2px;background:var(--amber);margin-top:4.6vmin}
+  .on .mark,.on .tag-ar,.on .tag-en,.on .rule{animation:rise 1.3s .15s both cubic-bezier(.2,.6,.2,1)}
+  .on .tag-ar{animation-delay:.5s}.on .tag-en{animation-delay:.75s}.on .rule{animation-delay:.95s}
+
+  /* ---- partner brand wall ---- */
+  .bw-eyebrow{position:relative;z-index:1;font-weight:330;font-size:2.1vmin;letter-spacing:.3em;
+    text-transform:uppercase;color:var(--amber);margin-bottom:5vmin}
+  .bw{position:relative;z-index:1;display:flex;flex-wrap:wrap;justify-content:center;
+    gap:3vmin 6vmin;max-width:80vw}
+  .bw span{font-weight:280;font-size:4.2vmin;letter-spacing:.18em;text-indent:.18em;
+    text-transform:uppercase;white-space:nowrap;opacity:0}
+  .on .bw span{animation:rise .9s both cubic-bezier(.2,.6,.2,1)}
+  .bw-dot{color:var(--amber)}
+  .on .bw-eyebrow{animation:rise 1s .1s both}
+
+  /* ---- QR / visit scene ---- */
+  .qr-wrap{position:relative;z-index:1;display:flex;align-items:center;gap:7vmin;
+    flex-wrap:wrap;justify-content:center}
+  .qr-img{width:30vmin;height:30vmin;border-radius:3vmin;border:2px solid rgba(232,135,11,.5);
+    background:var(--cream);padding:1.6vmin}
+  .qr-txt{text-align:center}
+  .qr-ar{font-family:'Plex Arabic','Outfit',sans-serif;font-weight:600;font-size:4.8vmin;direction:rtl;line-height:1.5}
+  .qr-en{font-weight:330;font-size:2.1vmin;letter-spacing:.24em;text-transform:uppercase;color:var(--muted);margin-top:1.8vmin}
+  .qr-line{font-weight:340;font-size:2.6vmin;letter-spacing:.08em;margin-top:4vmin;color:var(--cream)}
+  .qr-line b{color:var(--amber);font-weight:600}
+  .on .qr-wrap{animation:rise 1.2s .2s both cubic-bezier(.2,.6,.2,1)}
+
+  /* footer strip (always on, over everything) */
+  .foot{position:fixed;left:0;right:0;bottom:0;z-index:10;display:flex;align-items:center;
+    justify-content:center;gap:2.4vmin;padding:1.6vmin 0 2vmin;font-weight:335;font-size:1.8vmin;
+    letter-spacing:.12em;color:var(--muted);
+    background:linear-gradient(to top, rgba(13,11,9,.88), transparent)}
+  .foot .d{width:.7vmin;height:.7vmin;border-radius:50%;background:var(--amber)}
+  .foot .wm{letter-spacing:.3em;text-indent:.3em;color:var(--cream);font-weight:300}
+  .foot .wm b{color:var(--amber);font-weight:600}
+</style>
+</head>
+<body>
+<div id="s0" class="scene"></div>
+<div id="s1" class="scene"></div>
+<div class="foot" dir="ltr">
+  <span>lightware-sy.netlify.app</span><span class="d"></span>
+  <span class="wm">LIGHTWARE<b>.</b></span>
+  <span class="d"></span><span>WhatsApp +1 438 304 3333</span>
+</div>
+
+<script>
+/* ================= Lightware TV engine ================= */
+var SB='https://ohprikkwnymjtcxzoylq.supabase.co';
+var KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ocHJpa2t3bnltanRjeHpveWxxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMzNDQ5MjQsImV4cCI6MjA5ODkyMDkyNH0.0nI52H8ZV6fuj948WGk-ZLDVSgIu9y59_9R2a_jZST0';
+var QR='qr.png';
+
+var PRODUCT_MS=13000, CARD_MS=9000, FADE_MS=1400;
+
+/* SHOWCASE CURATION (Jul 2026) — the screen shows only pieces whose FORM is the
+   selling point, and only what's actually in stock. Anything not listed here is
+   dropped on purpose: spotlights (145 items — would be 2/3 of the loop, and a
+   recessed cylinder reads as a technical part), bulbs, LED strip/rope, panels,
+   floodlights, magnetic-track components. Those sell on spec, not on looks.
+   Current pool ≈ 192 in-stock pieces ≈ 42 min before any repeat.
+   To bring a category back, add its Arabic keyword here. */
+var TYPES=[
+  ['ثريا','Chandeliers'],['نازلة','Pendant Lighting'],['نوازل','Pendant Lighting'],
+  ['ابليك','Wall Lighting'],['أبليك','Wall Lighting'],
+  ['ستاند','Floor Lamps'],['لمبدير','Table Lamps'],
+  ['فانوس','Outdoor Lanterns']
+];
+var EXCLUDE=['طرانس','وصلة','درايفر','محول','قاعدة','اكسسوار','شاحن','كليبس','براغي','ريموت','جك ','سلك'];
+var BRANDS_WALL=['Megaman','Legrand','BTicino','LEDs C4','Panasonic','Simon Urmet','Dahua','Orvibo','KNX','Energetic'];
+
+function cleanName(n){
+  return (n||'')
+    .replace(/\b(?=[A-Za-z0-9\-*\/.]*[A-Za-z])(?=[A-Za-z0-9\-*\/.]*\d)[A-Za-z0-9\-*\/.]{3,}\b/g,' ')
+    .replace(/\b[A-Za-z]{2,}\b/g,' ')
+    .replace(/\b\d{2,4}\s*(?:فولت|v)\b/gi,' ')
+    .replace(/\bip\s*\d{2}\b/gi,' ')
+    .replace(/\s{2,}/g,' ').trim();
+}
+function typeOf(n){
+  for(var i=0;i<TYPES.length;i++){if(n.indexOf(TYPES[i][0])>=0)return TYPES[i][1];}
+  return null;
+}
+
+/* ---------- data ---------- */
+function fetchCatalog(cb){
+  var out=[],page=0,SZ=1000;
+  (function go(){
+    var x=new XMLHttpRequest();
+    x.open('GET',SB+'/rest/v1/dashboard_items?select=code,name,brand,qty,image_url&image_url=not.is.null&qty=gt.0&order=code&limit='+SZ+'&offset='+page*SZ);
+    x.setRequestHeader('apikey',KEY);x.setRequestHeader('Authorization','Bearer '+KEY);
+    x.onload=function(){
+      try{var rows=JSON.parse(x.responseText);}catch(e){return cb(null);}
+      out=out.concat(rows);
+      if(rows.length===SZ && page<4){page++;go();}else cb(out);
+    };
+    x.onerror=function(){cb(null)};
+    x.send();
+  })();
+}
+function buildPool(rows){
+  var pool=[];
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i];
+    if(!r.image_url||!/\.webp(\?|$)/.test(r.image_url))continue;   /* staged cutouts only */
+    if((r.qty||0)<=0)continue;                                     /* in stock only */
+    var name=r.name||'';
+    var skip=false;
+    for(var j=0;j<EXCLUDE.length;j++)if(name.indexOf(EXCLUDE[j])>=0){skip=true;break;}
+    if(skip)continue;
+    var t=typeOf(name);if(!t)continue;
+    var clean=cleanName(name);if(clean.length<3)continue;
+    pool.push({img:r.image_url,ar:clean,cat:t,
+      brand:/^[A-Za-z]/.test(r.brand||'')?r.brand:null});
+  }
+  return pool;
+}
+
+/* ---------- playlist ---------- */
+function shuffle(a){for(var i=a.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1));var t=a[i];a[i]=a[j];a[j]=t}return a}
+function buildPlaylist(pool){
+  /* group by category, shuffle inside, then interleave runs of 2 */
+  var by={};pool.forEach(function(p){(by[p.cat]=by[p.cat]||[]).push(p)});
+  var cats=shuffle(Object.keys(by));cats.forEach(function(c){shuffle(by[c])});
+  var run=[],idx={},exhausted=0,ci=0;
+  cats.forEach(function(c){idx[c]=0});
+  while(exhausted<cats.length){
+    var c=cats[ci%cats.length];ci++;
+    var arr=by[c],k=idx[c];
+    if(k>=arr.length){continue}
+    var take=Math.min(2,arr.length-k);
+    for(var i=0;i<take;i++)run.push({kind:'product',item:arr[k+i]});
+    idx[c]+=take;
+    if(idx[c]>=arr.length)exhausted++;
+  }
+  /* interleave brand moments */
+  var out=[],n=0;
+  for(var i=0;i<run.length;i++){
+    out.push(run[i]);n++;
+    if(n%8===0)out.push({kind:'statement'});
+    if(n%13===0)out.push({kind:'qr'});
+    if(n%21===0)out.push({kind:'wall'});
+  }
+  return out;
+}
+
+/* ---------- renderers ---------- */
+function rProduct(el,it){
+  el.innerHTML='<div class="p-stage"><div class="p-glow"></div>'+
+    '<img class="p-img" src="'+it.img+'" alt=""></div>'+
+    '<div class="p-txt"><div class="p-eyebrow">'+it.cat+(it.brand?' &nbsp;·&nbsp; '+it.brand:'')+'</div>'+
+    '<div class="p-name">'+it.ar+'</div>'+
+    '<div class="p-sub">متوفر بالصالة</div></div>';
+}
+function rStatement(el){
+  el.innerHTML='<div class="mark" dir="ltr">LIGHTWARE<b>.</b></div>'+
+    '<div class="tag-ar">أرقى بيوت الإنارة بالعالم — تحت سقف واحد</div>'+
+    '<div class="tag-en">The finest lighting houses, under one roof</div><div class="rule"></div>';
+}
+function rWall(el){
+  var h='<div class="bw-eyebrow">Our Brands</div><div class="bw" dir="ltr">';
+  for(var i=0;i<BRANDS_WALL.length;i++){
+    h+='<span style="animation-delay:'+(0.15+i*0.12)+'s">'+BRANDS_WALL[i]+
+       (i<BRANDS_WALL.length-1?' <span class="bw-dot">·</span>':'')+'</span>';
+  }
+  el.innerHTML=h+'</div>';
+}
+function rQr(el){
+  el.innerHTML='<div class="qr-wrap"><img class="qr-img" src="'+QR+'" alt="QR">'+
+    '<div class="qr-txt"><div class="qr-ar">تصفّح المجموعة كاملة<br>من موبايلك</div>'+
+    '<div class="qr-en">Scan to browse the collection</div>'+
+    '<div class="qr-line">الشعلان — ساحة النجمة &nbsp;<b>·</b>&nbsp; دمشق</div></div></div>';
+}
+
+/* ---------- loop ---------- */
+var layers=[document.getElementById('s0'),document.getElementById('s1')];
+var cur=0, playlist=[], pos=0;
+
+function preload(i){
+  for(var k=i;k<Math.min(i+3,playlist.length);k++){
+    if(playlist[k].kind==='product'){(new Image()).src=playlist[k].item.img;}
+  }
+}
+function show(){
+  if(!playlist.length)return;
+  if(pos>=playlist.length){pos=0;playlist=buildPlaylist(POOL);}
+  var s=playlist[pos];pos++;
+  var nxt=layers[1-cur], prv=layers[cur];
+  nxt.className='scene';
+  if(s.kind==='product')rProduct(nxt,s.item);
+  else if(s.kind==='statement')rStatement(nxt);
+  else if(s.kind==='wall')rWall(nxt);
+  else rQr(nxt);
+  /* force reflow so the entry animation restarts */
+  void nxt.offsetWidth;
+  nxt.classList.add('on');prv.classList.remove('on');
+  cur=1-cur;
+  preload(pos);
+  setTimeout(show, s.kind==='product'?PRODUCT_MS:CARD_MS);
+}
+
+var POOL=[];
+function boot(){
+  fetchCatalog(function(rows){
+    if(rows&&rows.length){
+      POOL=buildPool(rows);
+      try{localStorage.setItem('lwtv_pool_v2',JSON.stringify(POOL));}catch(e){}
+    }else{
+      try{POOL=JSON.parse(localStorage.getItem('lwtv_pool_v2')||'[]');}catch(e){POOL=[]}
+    }
+    if(!POOL.length){ /* nothing yet: hold the brand statement and retry */
+      rStatement(layers[0]);layers[0].classList.add('on');
+      setTimeout(boot,60000);return;
+    }
+    playlist=buildPlaylist(POOL);pos=0;preload(0);show();
+  });
+}
+boot();
+
+/* hourly data refresh (applies on next playlist rebuild) */
+setInterval(function(){fetchCatalog(function(rows){
+  if(rows&&rows.length){POOL=buildPool(rows);
+    try{localStorage.setItem('lwtv_pool_v2',JSON.stringify(POOL));}catch(e){}}
+})},3600000);
+
+/* nightly reload at ~04:00 keeps long-running TV browsers healthy */
+setInterval(function(){var h=new Date().getHours();if(h===4){location.reload(true);}},1800000);
+
+/* wake-lock where supported (many TV browsers ignore it — also disable device sleep) */
+if(navigator.wakeLock&&navigator.wakeLock.request){
+  var lock=function(){navigator.wakeLock.request('screen').catch(function(){})};
+  lock();document.addEventListener('visibilitychange',lock);
+}
+</script>
+</body>
+</html>
