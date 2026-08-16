@@ -199,12 +199,33 @@
 var SB='https://ohprikkwnymjtcxzoylq.supabase.co';
 var KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ocHJpa2t3bnltanRjeHpveWxxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMzNDQ5MjQsImV4cCI6MjA5ODkyMDkyNH0.0nI52H8ZV6fuj948WGk-ZLDVSgIu9y59_9R2a_jZST0';
 var NET={'25':1,'26':1,'27':1,'29':1,'35':1,'39':1};
-var LS='lw_img_triage_v1', LSF='lw_img_flags_v1';
-var MISSING=[],HAVE=[],TOTAL=0,view='todo',MARK={},FLAG={},PEND={},upCode=null,upFromLb=false,lbCode=null;
+var LS='lw_img_triage_v1', LSF='lw_img_flags_v1', LSR='lw_img_reps_v1';
+var MISSING=[],HAVE=[],TOTAL=0,view='todo',MARK={},FLAG={},PEND={},REP={},upCode=null,upFromLb=false,lbCode=null;
 
 try{MARK=JSON.parse(localStorage.getItem(LS)||'{}')}catch(e){MARK={}}
 try{FLAG=JSON.parse(localStorage.getItem(LSF)||'{}')}catch(e){FLAG={}}
-function save(){try{localStorage.setItem(LS,JSON.stringify(MARK));localStorage.setItem(LSF,JSON.stringify(FLAG))}catch(e){}}
+try{REP=JSON.parse(localStorage.getItem(LSR)||'{}')}catch(e){REP={}}
+function save(){try{localStorage.setItem(LS,JSON.stringify(MARK));localStorage.setItem(LSF,JSON.stringify(FLAG));
+  localStorage.setItem(LSR,JSON.stringify(REP))}catch(e){}}
+
+/* ⚠ REPLACEMENTS ARE TRACKED HERE, NOT IN `PEND`. The bucket is an append-only
+   inbox — the pipeline downloads from it and never deletes — so PEND holds every
+   photo ever uploaded, including the ones that BECAME the live picture (live
+   count at build time: 616 objects, 604 of them on items that already have an
+   image). On the missing list that is harmless: a published item leaves the list.
+   On the verify list it would hide the 📷 on 40% of rows forever.
+   `REP[code] = {t, u}` records what THIS device sent and the image_url it was
+   sent against; a changed url means the swap landed, so the entry retires itself
+   (stage_images.py's version prefix guarantees the url changes on publish). */
+var REP_TTL=30*864e5;                                  /* backstop: never nag past a month */
+function healReps(){
+  var now=Date.now(),dirty=false;
+  HAVE.forEach(function(r){
+    var e=REP[r.code];if(!e)return;
+    if(e.u!==r.image_url||now-(e.t||0)>REP_TTL){delete REP[r.code];dirty=true}
+  });
+  if(dirty)save();
+}
 
 function toast(msg,err){var t=document.getElementById('toast');t.textContent=msg;
   t.className='toast on'+(err?' err':'');setTimeout(function(){t.classList.remove('on')},err?4200:1900)}
@@ -305,7 +326,7 @@ function render(){
     items.forEach(function(r){
       var qv=r.qty||0;
       if(view==='verify'){
-        var fl=FLAG[r.code]?' flagged':'',vp=PEND[r.code];
+        var fl=FLAG[r.code]?' flagged':'',vp=REP[r.code];   /* REP, not PEND — see healReps */
         h+='<div class="row vrow'+fl+(vp?' pend':'')+'" data-c="'+r.code+'">'+
            '<img class="thumb" loading="lazy" src="'+r.image_url+'" onerror="this.style.visibility=\'hidden\'">'+
            '<span class="code">'+r.code+'</span><span class="nm">'+(r.name||'')+'</span>'+
@@ -389,7 +410,7 @@ document.getElementById('file').addEventListener('change',function(){
   var f=this.files[0];this.value='';
   if(!f||!upCode)return;
   var code=upCode,fromLb=upFromLb;upCode=null;upFromLb=false;
-  var isRep=!!itemOf(code);           /* already in HAVE ⇒ this replaces a live picture */
+  var live=itemOf(code),isRep=!!live;  /* already in HAVE ⇒ this replaces a live picture */
   setUpBusy(code,true);
   toast('عم نرفع صورة '+code+'…');
   compress(f,function(blob){
@@ -400,6 +421,7 @@ document.getElementById('file').addEventListener('change',function(){
     x.onload=function(){
       if(x.status>=200&&x.status<300){
         PEND[code]=1;
+        if(isRep){REP[code]={t:Date.now(),u:live.image_url};save()}
         toast(isRep?'وصلت البديلة ✓ — رح تنعالج وتتبدّل عالموقع'
                    :'وصلت ✓ — رح تنعالج وتنزل عالموقع');
         if(fromLb)closeM('lbModal');
@@ -426,7 +448,7 @@ function openLightbox(c){
   document.getElementById('lbTitle').textContent=r.name||'';
   document.getElementById('lbSub').textContent=r.code+(FLAG[c]?'  ·  ⚠ معلّمة غلط':'');
   /* a replacement already in flight ⇒ show that, not a second camera button */
-  var pd=!!PEND[c],up=document.getElementById('lbUp');
+  var pd=!!REP[c],up=document.getElementById('lbUp');
   document.getElementById('lbPend').style.display=pd?'block':'none';
   up.style.display=pd?'none':'';
   up.classList.remove('busy');up.textContent='📷 صوّر بديلة';
@@ -453,8 +475,8 @@ function openExport(){
   MISSING.forEach(function(r){var s=stateOf(r.code);
     if(s==='have')have.push(r.code);else if(s==='shoot')shoot.push(r.code)});
   Object.keys(FLAG).forEach(function(c){flag.push(c)});
-  /* replacements = a pending upload on an item that ALREADY has a live picture */
-  HAVE.forEach(function(r){if(PEND[r.code])rep.push(r.code)});
+  /* replacements sent from THIS device and not yet swapped in (healReps retires the rest) */
+  HAVE.forEach(function(r){if(REP[r.code])rep.push(r.code)});
   var txt='# صور موجودة عنا — '+have.length+' مادة\n'+have.join('\n')+
           '\n\n# لازم تصوير — '+shoot.length+' مادة\n'+shoot.join('\n')+
           '\n\n# صور غلط / ضعيفة — '+flag.length+' مادة\n'+flag.join('\n')+
@@ -483,6 +505,7 @@ function boot(){
     MISSING=miss;
     fetchRows('image_url=not.is.null',function(have){
       HAVE=have||[];
+      healReps();                       /* a swapped-in picture retires its ⏳ by itself */
       TOTAL=MISSING.length+HAVE.length;
       var done=HAVE.length,pct=Math.round(done/TOTAL*100);
       document.getElementById('done').textContent=done;
