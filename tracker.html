@@ -5,13 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lightware — صور المنتجات</title>
 <!--
-  Tracker v3 (Jul 2026): triage + direct camera upload + verify tab.
+  Tracker v4 (Aug 2026): triage + direct camera upload + verify tab WITH replace.
   · Missing items: Qusay marks عنا صورة / لازم تصوير, or taps 📷 to shoot &
     upload the photo right from his phone → goes to the PRIVATE intake-photos
     bucket (never straight to the live sites — Samir's pipeline processes,
     stages, QAs, then links; the row then disappears on its own).
   · Verify tab (الموجود): every item that HAS an image, with thumbnail +
-    full-size lightbox, so Qusay can flag wrong/weak photos (⚠ غلط).
+    full-size lightbox, so Qusay can flag wrong/weak photos (⚠ غلط) — or tap
+    📷 beside the thumbnail to shoot the REPLACEMENT on the spot.
+  · ⚠ A replacement uses the SAME bucket and the SAME `<code>_<epoch>.jpg`
+    name as a new photo — deliberately: marketing/photo_intake.py validates
+    that exact shape and its census already reports "codes that ALREADY have
+    a picture ⚠ linking would REPLACE it". A `replace/` prefix or a `_rep_`
+    infix would make the pipeline miss the file or warn on the name. The live
+    image is never touched from here; the swap happens in the pipeline.
   · Uploads/pending need intake_policy.sql pasted once — until then the
     button explains itself loudly.
   Hosted with the TV site → lightware-tv-sy.netlify.app/tracker.html
@@ -106,9 +113,12 @@
   .sheet p{font-size:13px;color:var(--muted);margin-bottom:10px}
   .sheet textarea{flex:1;min-height:170px;background:var(--ink);color:var(--cream);border:1px solid var(--line);
     border-radius:11px;padding:11px;font-family:'Outfit';font-size:13px;direction:ltr;text-align:left;resize:none}
-  .sheet .acts{display:flex;gap:8px;margin-top:11px}
-  .sheet .acts button{flex:1;font:inherit;font-weight:600;font-size:13px;padding:10px;border-radius:10px;
+  .sheet .acts{display:flex;gap:8px;margin-top:11px;flex-wrap:wrap}
+  .sheet .acts button{flex:1 1 132px;font:inherit;font-weight:600;font-size:13px;padding:10px;border-radius:10px;
     border:1px solid var(--line);background:var(--card2);color:var(--cream);cursor:pointer}
+  .sheet .acts button.busy{color:var(--faint);pointer-events:none}
+  .lbpend{font-size:12.5px;color:var(--amber);border:1px solid rgba(232,135,11,.4);border-radius:11px;
+    padding:9px 12px;margin-top:11px;text-align:center}
   .sheet .acts button.pri{background:var(--amber);color:#1C1813;border-color:var(--amber)}
   .sheet .acts button.bad{border-color:rgba(208,112,96,.55);color:var(--red)}
   .lbimg{width:100%;max-height:52vh;object-fit:contain;border-radius:11px;background:#F4F0E8;margin-bottom:10px}
@@ -172,8 +182,10 @@
     <img class="lbimg" id="lbImg" src="" alt="">
     <h3 id="lbTitle"></h3>
     <p id="lbSub" style="font-family:'Outfit';direction:ltr;text-align:right"></p>
+    <div class="lbpend" id="lbPend" style="display:none">⏳ الصورة الجديدة وصلت وعم تنعالج</div>
     <div class="acts">
       <button class="pri" id="lbOk">👍 الصورة تمام</button>
+      <button id="lbUp">📷 صوّر بديلة</button>
       <button class="bad" id="lbBad">⚠ الصورة غلط / ضعيفة</button>
       <button onclick="closeM('lbModal')">سكّر</button>
     </div>
@@ -188,7 +200,7 @@ var SB='https://ohprikkwnymjtcxzoylq.supabase.co';
 var KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ocHJpa2t3bnltanRjeHpveWxxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMzNDQ5MjQsImV4cCI6MjA5ODkyMDkyNH0.0nI52H8ZV6fuj948WGk-ZLDVSgIu9y59_9R2a_jZST0';
 var NET={'25':1,'26':1,'27':1,'29':1,'35':1,'39':1};
 var LS='lw_img_triage_v1', LSF='lw_img_flags_v1';
-var MISSING=[],HAVE=[],TOTAL=0,view='todo',MARK={},FLAG={},PEND={},upCode=null,lbCode=null;
+var MISSING=[],HAVE=[],TOTAL=0,view='todo',MARK={},FLAG={},PEND={},upCode=null,upFromLb=false,lbCode=null;
 
 try{MARK=JSON.parse(localStorage.getItem(LS)||'{}')}catch(e){MARK={}}
 try{FLAG=JSON.parse(localStorage.getItem(LSF)||'{}')}catch(e){FLAG={}}
@@ -267,8 +279,10 @@ var HOWTO={
       'وإذا القطعة قدامك — دوس زر <b>📷</b> يمين السطر: بيفتح الكاميرا وبيرفع الصورة فوراً. '+
       '<span>لما تخلّص دوس «صدّر اللستة» وابعتها لسمير.</span>',
   verify:'<b>تشييك الصور الموجودة:</b> دوس على أي مادة لتشوف صورتها كبيرة. '+
-      'إذا الصورة غلط أو ضعيفة — علّمها <b style="color:#D07060">⚠ غلط</b>. '+
-      '<span>العلامات بتطلع مع «صدّر اللستة» وسمير بيصلّحها.</span>'
+      'إذا بدك تبدّل الصورة والقطعة قدامك — دوس <b style="color:#E8870B">📷</b> جنب الصورة الصغيرة: '+
+      'بيفتح الكاميرا وبيرفع البديلة فوراً. وإذا الصورة غلط أو ضعيفة وما فيك تصوّرها هلق — '+
+      'علّمها <b style="color:#D07060">⚠ غلط</b>. '+
+      '<span>الصورة الجديدة ما بتتبدّل عالموقع فوراً — سمير بيعالجها وبيركّبها. العلامات بتطلع مع «صدّر اللستة».</span>'
 };
 function render(){
   document.getElementById('howto').innerHTML=view==='verify'?HOWTO.verify:HOWTO.def;
@@ -291,10 +305,12 @@ function render(){
     items.forEach(function(r){
       var qv=r.qty||0;
       if(view==='verify'){
-        var fl=FLAG[r.code]?' flagged':'';
-        h+='<div class="row vrow'+fl+'" data-c="'+r.code+'">'+
+        var fl=FLAG[r.code]?' flagged':'',vp=PEND[r.code];
+        h+='<div class="row vrow'+fl+(vp?' pend':'')+'" data-c="'+r.code+'">'+
            '<img class="thumb" loading="lazy" src="'+r.image_url+'" onerror="this.style.visibility=\'hidden\'">'+
            '<span class="code">'+r.code+'</span><span class="nm">'+(r.name||'')+'</span>'+
+           (vp?'<span class="pendtag">⏳ بديلة</span>'   /* short: the row is a glance, the lightbox explains */
+              :'<button class="up" data-c="'+r.code+'" title="صوّر بديلة وارفعها">📷</button>')+
            '<button class="flagbtn" data-c="'+r.code+'">⚠</button></div>';
       }else{
         var st=stateOf(r.code),pend=PEND[r.code];
@@ -319,8 +335,7 @@ function render(){
     };
   });
   document.querySelectorAll('.up').forEach(function(btn){
-    btn.onclick=function(ev){ev.stopPropagation();upCode=btn.dataset.c;
-      document.getElementById('file').click()};
+    btn.onclick=function(ev){ev.stopPropagation();startUpload(btn.dataset.c,false)};
   });
   document.querySelectorAll('.vrow').forEach(function(el){
     el.onclick=function(){openLightbox(el.dataset.c)};
@@ -356,12 +371,26 @@ function compress(file,cb){
   img.onerror=function(){URL.revokeObjectURL(url);cb(file)}; /* undecodable → send raw */
   img.src=url;
 }
+/* One camera path for both jobs: a NEW photo (missing item) and a REPLACEMENT
+   (verify tab / lightbox). Same bucket, same <code>_<epoch>.jpg name — see the
+   header note; the pipeline's census is what separates the two. */
+function startUpload(code,fromLb){
+  upCode=code;upFromLb=!!fromLb;
+  document.getElementById('file').click();
+}
+function setUpBusy(code,busy){
+  document.querySelectorAll('.up[data-c="'+code+'"]').forEach(function(b){
+    b.classList.toggle('busy',busy);b.textContent=busy?'⏳':'📷';
+  });
+  if(lbCode===code){var l=document.getElementById('lbUp');
+    l.classList.toggle('busy',busy);l.textContent=busy?'⏳ عم نرفع…':'📷 صوّر بديلة'}
+}
 document.getElementById('file').addEventListener('change',function(){
   var f=this.files[0];this.value='';
   if(!f||!upCode)return;
-  var code=upCode;upCode=null;
-  var btn=document.querySelector('.up[data-c="'+code+'"]');
-  if(btn){btn.classList.add('busy');btn.textContent='⏳'}
+  var code=upCode,fromLb=upFromLb;upCode=null;upFromLb=false;
+  var isRep=!!itemOf(code);           /* already in HAVE ⇒ this replaces a live picture */
+  setUpBusy(code,true);
   toast('عم نرفع صورة '+code+'…');
   compress(f,function(blob){
     var x=new XMLHttpRequest();
@@ -370,17 +399,20 @@ document.getElementById('file').addEventListener('change',function(){
     x.setRequestHeader('Content-Type','image/jpeg');
     x.onload=function(){
       if(x.status>=200&&x.status<300){
-        PEND[code]=1;toast('وصلت ✓ — رح تنعالج وتنزل عالموقع');render();
+        PEND[code]=1;
+        toast(isRep?'وصلت البديلة ✓ — رح تنعالج وتتبدّل عالموقع'
+                   :'وصلت ✓ — رح تنعالج وتنزل عالموقع');
+        if(fromLb)closeM('lbModal');
+        render();
       }else if(x.status===403||x.status===400){
         toast('الرفع بعدو مقفول — خبّر سمير (ناقص intake_policy.sql)',1);
-        if(btn){btn.classList.remove('busy');btn.textContent='📷'}
+        setUpBusy(code,false);
       }else{
         toast('ما زبط الرفع ('+x.status+') — جرّب كمان مرة',1);
-        if(btn){btn.classList.remove('busy');btn.textContent='📷'}
+        setUpBusy(code,false);
       }
     };
-    x.onerror=function(){toast('ما في نت؟ ما زبط الرفع — جرّب كمان مرة',1);
-      if(btn){btn.classList.remove('busy');btn.textContent='📷'}};
+    x.onerror=function(){toast('ما في نت؟ ما زبط الرفع — جرّب كمان مرة',1);setUpBusy(code,false)};
     x.send(blob);
   });
 });
@@ -393,8 +425,14 @@ function openLightbox(c){
   document.getElementById('lbImg').src=r.image_url;
   document.getElementById('lbTitle').textContent=r.name||'';
   document.getElementById('lbSub').textContent=r.code+(FLAG[c]?'  ·  ⚠ معلّمة غلط':'');
+  /* a replacement already in flight ⇒ show that, not a second camera button */
+  var pd=!!PEND[c],up=document.getElementById('lbUp');
+  document.getElementById('lbPend').style.display=pd?'block':'none';
+  up.style.display=pd?'none':'';
+  up.classList.remove('busy');up.textContent='📷 صوّر بديلة';
   document.getElementById('lbModal').classList.add('on');
 }
+document.getElementById('lbUp').onclick=function(){if(lbCode)startUpload(lbCode,true)};
 function toggleFlag(c){
   if(FLAG[c])delete FLAG[c];else FLAG[c]=1;
   save();render();
@@ -411,15 +449,18 @@ function closeM(id){document.getElementById(id).classList.remove('on')}
 
 /* ---------- export ---------- */
 function openExport(){
-  var have=[],shoot=[],flag=[];
+  var have=[],shoot=[],flag=[],rep=[];
   MISSING.forEach(function(r){var s=stateOf(r.code);
     if(s==='have')have.push(r.code);else if(s==='shoot')shoot.push(r.code)});
   Object.keys(FLAG).forEach(function(c){flag.push(c)});
+  /* replacements = a pending upload on an item that ALREADY has a live picture */
+  HAVE.forEach(function(r){if(PEND[r.code])rep.push(r.code)});
   var txt='# صور موجودة عنا — '+have.length+' مادة\n'+have.join('\n')+
           '\n\n# لازم تصوير — '+shoot.length+' مادة\n'+shoot.join('\n')+
-          '\n\n# صور غلط / ضعيفة — '+flag.length+' مادة\n'+flag.join('\n');
+          '\n\n# صور غلط / ضعيفة — '+flag.length+' مادة\n'+flag.join('\n')+
+          '\n\n# صور بديلة مرفوعة — '+rep.length+' مادة\n'+rep.join('\n');
   document.getElementById('exDesc').textContent='عنا صورة: '+have.length+' · لازم تصوير: '+shoot.length+
-    ' · صور غلط: '+flag.length+' — انسخ وابعتها لسمير';
+    ' · صور غلط: '+flag.length+' · بديلة مرفوعة: '+rep.length+' — انسخ وابعتها لسمير';
   document.getElementById('exText').value=txt;
   document.getElementById('exModal').classList.add('on');
 }
